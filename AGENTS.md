@@ -3,7 +3,7 @@
 ## Repo Shape
 - Rust 2024 workspace with resolver `3`; members are discovered from `apps/*` and `crates/*`.
 - CLI package is `apps/cli` (`switchyard`); `apps/cli/src/main.rs` initializes encryption and terminal state, then hands off to the TUI loop in `apps/cli/src/application.rs`.
-- Internal crates are path dependencies: `switchyard-core` has model/provider/session types and `switchyard-crypto` has Argon2/AES-GCM vault code. CLI-local provider and runtime path logic lives in `apps/cli/src/provider.rs` and `apps/cli/src/runtime.rs`.
+- Internal crates are path dependencies: `switchyard-core` has model/provider/session types and `switchyard-crypto` has Argon2/AES-GCM vault code. CLI-local slash commands, provider integration, key cache, and runtime path logic live under `apps/cli/src/`.
 
 ## Commands
 - Build all workspace members: `cargo build --workspace`
@@ -19,7 +19,7 @@
 - No repo-local pre-commit hooks, rust-toolchain, rustfmt, clippy, or task-runner config exists; use installed Rust defaults.
 - Tests are currently inline unit tests; there are no `tests/`, `benches/`, or `examples/` directories.
 - Keep `Cargo.lock` committed; this workspace contains the `switchyard` binary application.
-- `apps/cli/build.rs` sets `SWITCHYARD_VERSION` from matching `GITHUB_REF_NAME`; local builds use current ISO week plus the next lowercase suffix after the latest matching git tag.
+- `apps/cli/build.rs` sets `SWITCHYARD_VERSION` from `GITHUB_REF_NAME` only when it matches `YYwWW[a-z]*`; local builds use current ISO week plus the next lowercase suffix after the latest matching git tag.
 - Dev releases are tag-triggered only; `.github/workflows/dev-rel.yml` accepts tags matching `YYwWW[a-z]*`, extracts the latest `CHANGELOG.md` section, and builds `cargo build -p switchyard --release`.
 
 ## Provider Runtime
@@ -28,7 +28,8 @@
 - In the TUI, `/provider ollama|llama.cpp` switches providers and resets the model to that provider's env/default model; `/model <name>` changes only the current model and strips a trailing `.gguf` for llama.cpp.
 
 ## Runtime Gotchas
-- `cargo run -p switchyard` initializes/reads the vault before entering the TUI at `$XDG_STATE_HOME/switchyard/salt` only when `XDG_STATE_HOME` is absolute, otherwise `$HOME/.local/state/switchyard/salt`.
+- `cargo run -p switchyard` initializes/reads state before entering the TUI under `$XDG_STATE_HOME/switchyard` only when `XDG_STATE_HOME` is absolute, otherwise `$HOME/.local/state/switchyard`.
+- `salt` is the encrypted vault initializer; `state.json` persists devtools visibility/tab plus selected provider/model.
 - First run prompts for an encryption password; `initial_password()` requires at least 8 chars with uppercase, lowercase, digit, and special char.
 - The derived encryption key is cached in the system keyring for 5 minutes under service `switchyard`, user `encryption-key-cache`; invalid or expired cache entries are removed.
 - Vault files use a 64-byte binary `SWYVLT` v1 header in `crates/crypto/src/storage`; treat changes there as persisted format changes.
