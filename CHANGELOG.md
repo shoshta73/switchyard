@@ -9,6 +9,7 @@
   - `/provider [ollama|llama.cpp]` switches provider, or opens a provider picker when run without arguments.
   - `/model [name]` switches model, or opens a model picker when run without arguments.
 - Added in-app provider and model selection menus for switching between Ollama and llama.cpp without restarting.
+- Added automatic model discovery to the model picker for Ollama and llama.cpp local providers.
 - Added short-lived keyring caching for the vault encryption key, reducing repeat password prompts during a session.
 
 ### Changed

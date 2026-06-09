@@ -59,6 +59,16 @@ struct OllamaStreamResponse {
 }
 
 #[derive(Deserialize)]
+struct OllamaTagsResponse {
+    models: Vec<OllamaTagModel>,
+}
+
+#[derive(Deserialize)]
+struct OllamaTagModel {
+    name: String,
+}
+
+#[derive(Deserialize)]
 struct OllamaResponseMessage {
     #[serde(default)]
     content: String,
@@ -81,6 +91,16 @@ struct LlamaCppMessage {
 #[derive(Deserialize)]
 struct LlamaCppStreamResponse {
     choices: Vec<LlamaCppChoice>,
+}
+
+#[derive(Deserialize)]
+struct LlamaCppModelsResponse {
+    data: Vec<LlamaCppModel>,
+}
+
+#[derive(Deserialize)]
+struct LlamaCppModel {
+    id: String,
 }
 
 #[derive(Deserialize)]
@@ -139,6 +159,13 @@ impl LocalProvider {
         }
     }
 
+    pub(crate) async fn models_async(&self) -> Result<Vec<Model>> {
+        match self {
+            Self::Ollama(provider) => provider.models_async().await,
+            Self::LlamaCpp(provider) => provider.models_async().await,
+        }
+    }
+
     pub(crate) async fn stream_async(
         &self,
         request: ChatRequest,
@@ -167,6 +194,37 @@ impl OllamaProvider {
 
     pub(crate) fn chat_url(&self) -> String {
         format!("{}/api/chat", self.base_url)
+    }
+
+    fn tags_url(&self) -> String {
+        format!("{}/api/tags", self.base_url)
+    }
+
+    pub(crate) async fn models_async(&self) -> Result<Vec<Model>> {
+        let url = self.tags_url();
+        let response = self
+            .client
+            .get(url.as_str())
+            .send()
+            .await
+            .with_context(|| format!("failed to send Ollama model discovery request to {url}"))?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response
+                .text()
+                .await
+                .context("failed to read Ollama model discovery error response")?;
+            bail!("Ollama model discovery failed: HTTP status {status}: {body}");
+        }
+
+        let response: OllamaTagsResponse = response
+            .json()
+            .await
+            .context("failed to decode Ollama model discovery response")?;
+
+        Ok(models_from_names(
+            response.models.into_iter().map(|model| model.name),
+        ))
     }
 
     pub(crate) async fn send_async(&self, request: ChatRequest) -> Result<ChatResponse> {
@@ -269,6 +327,39 @@ impl LlamaCppProvider {
         format!("{}/v1/chat/completions", self.base_url)
     }
 
+    fn models_url(&self) -> String {
+        format!("{}/v1/models", self.base_url)
+    }
+
+    pub(crate) async fn models_async(&self) -> Result<Vec<Model>> {
+        let url = self.models_url();
+        let response = self
+            .client
+            .get(url.as_str())
+            .send()
+            .await
+            .with_context(|| {
+                format!("failed to send llama.cpp model discovery request to {url}")
+            })?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response
+                .text()
+                .await
+                .context("failed to read llama.cpp model discovery error response")?;
+            bail!("llama.cpp model discovery failed: HTTP status {status}: {body}");
+        }
+
+        let response: LlamaCppModelsResponse = response
+            .json()
+            .await
+            .context("failed to decode llama.cpp model discovery response")?;
+
+        Ok(models_from_names(
+            response.data.into_iter().map(|model| model.id),
+        ))
+    }
+
     pub(crate) async fn stream_async(
         &self,
         request: ChatRequest,
@@ -368,6 +459,17 @@ fn env_with_fallback(project_key: &str, fallback_key: &str, default: &str) -> St
         .unwrap_or_else(|_| default.to_string())
 }
 
+fn models_from_names(names: impl IntoIterator<Item = String>) -> Vec<Model> {
+    let mut models = Vec::new();
+    for name in names {
+        if name.is_empty() || models.iter().any(|model: &Model| model.name == name) {
+            continue;
+        }
+        models.push(name.into());
+    }
+    models
+}
+
 fn ollama_message_from_message(message: Message) -> Option<OllamaMessage> {
     let role = match message.role {
         MessageRole::System => "system",
@@ -447,4 +549,40 @@ fn emit_llama_cpp_stream_line(line: &str, on_event: &mut impl FnMut(StreamEvent)
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LlamaCppModelsResponse, OllamaTagsResponse, models_from_names};
+
+    #[test]
+    fn parses_ollama_tag_models() {
+        let response: OllamaTagsResponse =
+            serde_json::from_str(r#"{"models":[{"name":"llama3.2"},{"name":"qwen2.5:7b"}]}"#)
+                .unwrap();
+
+        let models = models_from_names(response.models.into_iter().map(|model| model.name));
+
+        assert_eq!(models[0].name, "llama3.2");
+        assert_eq!(models[1].name, "qwen2.5:7b");
+    }
+
+    #[test]
+    fn parses_llama_cpp_models() {
+        let response: LlamaCppModelsResponse =
+            serde_json::from_str(r#"{"data":[{"id":"model-a"},{"id":"model-b"}]}"#).unwrap();
+
+        let models = models_from_names(response.data.into_iter().map(|model| model.id));
+
+        assert_eq!(models[0].name, "model-a");
+        assert_eq!(models[1].name, "model-b");
+    }
+
+    #[test]
+    fn filters_empty_and_duplicate_models() {
+        let models = models_from_names(["a".to_string(), "".to_string(), "a".to_string()]);
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].name, "a");
+    }
 }

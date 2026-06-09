@@ -51,6 +51,14 @@ enum ProviderEvent {
         error: String,
         total_time: Duration,
     },
+    ModelsDiscovered {
+        provider: String,
+        models: Vec<Model>,
+    },
+    ModelDiscoveryFailed {
+        provider: String,
+        error: String,
+    },
 }
 
 impl Data {
@@ -182,12 +190,14 @@ impl Menu {
         }
     }
 
-    fn model(current_provider: &Provider, current_model: &Model) -> Self {
+    fn model(current_provider: &Provider, current_model: &Model, models: Vec<Model>) -> Self {
         let default_model =
             provider::LocalProvider::default_model_for(current_provider.name.as_str());
-        let mut items = vec![current_model.name.clone()];
-        if default_model.name != current_model.name {
-            items.push(default_model.name);
+        let mut items = Vec::new();
+        push_menu_item(&mut items, current_model.name.as_str());
+        push_menu_item(&mut items, default_model.name.as_str());
+        for model in models {
+            push_menu_item(&mut items, model.name.as_str());
         }
 
         Self {
@@ -204,6 +214,12 @@ impl Menu {
 
     fn next(&mut self) {
         self.selected = (self.selected + 1).min(self.items.len().saturating_sub(1));
+    }
+}
+
+fn push_menu_item(items: &mut Vec<String>, item: &str) {
+    if !item.is_empty() && !items.iter().any(|existing| existing == item) {
+        items.push(item.to_string());
     }
 }
 
@@ -527,7 +543,7 @@ fn update(data: &mut Data, state: &mut State) -> Result<bool> {
                     return Ok(true);
                 }
                 command::Outcome::OpenModelMenu => {
-                    state.menu = Some(Menu::model(&state.provider, &state.model));
+                    open_model_menu(data, state);
                     state.input.clear();
                     return Ok(true);
                 }
@@ -647,6 +663,30 @@ fn push_diagnostic(state: &mut State, content: String) {
     state.messages_follow_tail = true;
 }
 
+fn open_model_menu(data: &mut Data, state: &mut State) {
+    state.menu = Some(Menu::model(&state.provider, &state.model, Vec::new()));
+
+    let provider_name = state.provider.name.clone();
+    let local_provider = provider::LocalProvider::from_name(provider_name.as_str());
+    let provider_events_tx = data.provider_events_tx.clone();
+    data.runtime.spawn(async move {
+        match local_provider.models_async().await {
+            Ok(models) => {
+                let _ = provider_events_tx.send(ProviderEvent::ModelsDiscovered {
+                    provider: provider_name,
+                    models,
+                });
+            }
+            Err(err) => {
+                let _ = provider_events_tx.send(ProviderEvent::ModelDiscoveryFailed {
+                    provider: provider_name,
+                    error: format!("{err:#}"),
+                });
+            }
+        }
+    });
+}
+
 fn handle_menu_key(state: &mut State, code: KeyCode) -> Result<bool> {
     match code {
         KeyCode::Esc => {
@@ -751,10 +791,44 @@ fn drain_provider_events(data: &mut Data, state: &mut State) {
                     content: format!("{} request failed: {error}", state.provider.name),
                 });
             }
+            ProviderEvent::ModelsDiscovered { provider, models } => {
+                if provider == state.provider.name
+                    && let Some(menu) = &mut state.menu
+                    && matches!(menu.kind, MenuKind::Model)
+                {
+                    *menu = Menu::model(&state.provider, &state.model, models);
+                }
+            }
+            ProviderEvent::ModelDiscoveryFailed { provider, error } => {
+                if provider == state.provider.name {
+                    push_diagnostic(state, format!("Model discovery failed: {error}"));
+                }
+            }
         }
         if state.messages_follow_tail {
             state.messages_scroll = u16::MAX;
         }
         state.devtools_scroll = u16::MAX;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use switchyard_core::{Model, Provider};
+
+    use super::Menu;
+
+    #[test]
+    fn model_menu_includes_current_default_and_discovered_models_once() {
+        let provider = Provider::from("Ollama");
+        let current_model = Model::from("custom");
+
+        let menu = Menu::model(
+            &provider,
+            &current_model,
+            vec!["llama3.2".into(), "qwen2.5".into(), "custom".into()],
+        );
+
+        assert_eq!(menu.items, vec!["custom", "llama3.2", "qwen2.5"]);
     }
 }
