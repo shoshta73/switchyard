@@ -6,6 +6,7 @@ use tracing::error;
 use switchyard_crypto::{Vault, argon2, decrypt, encrypt, random_nonce, random_salt};
 
 mod application;
+mod command;
 mod log;
 mod provider;
 mod runtime;

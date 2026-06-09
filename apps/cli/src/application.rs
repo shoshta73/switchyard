@@ -15,7 +15,7 @@ use switchyard_core::{ChatRequest, Message, MessageRole, Model, Provider, Sessio
 use switchyard_crypto::argon2;
 use tokio::runtime::Runtime;
 
-use crate::{log, provider, terminal};
+use crate::{command, log, provider, terminal};
 
 pub(crate) struct Data {
     pub(crate) logging_buffer: log::Buffer,
@@ -419,13 +419,17 @@ fn update(data: &mut Data, state: &mut State) -> Result<bool> {
 
             let prompt = state.input.trim().to_string();
 
-            if prompt == "/exit" {
-                return Ok(false);
-            }
-
-            if handle_command(state, prompt.as_str()) {
-                state.input.clear();
-                return Ok(true);
+            let mut command_context = command::Context::new(&mut state.provider, &mut state.model);
+            match command::handle(&mut command_context, prompt.as_str()) {
+                command::Outcome::Exit => return Ok(false),
+                command::Outcome::Handled => {
+                    for diagnostic in command_context.take_diagnostics() {
+                        push_diagnostic(state, diagnostic);
+                    }
+                    state.input.clear();
+                    return Ok(true);
+                }
+                command::Outcome::Ignored => {}
             }
 
             if !prompt.is_empty() {
@@ -530,77 +534,6 @@ fn update(data: &mut Data, state: &mut State) -> Result<bool> {
     }
 
     Ok(true)
-}
-
-fn handle_command(state: &mut State, prompt: &str) -> bool {
-    let Some(command) = prompt.strip_prefix('/') else {
-        return false;
-    };
-    let mut parts = command.split_whitespace();
-    let Some(name) = parts.next() else {
-        return false;
-    };
-
-    match name {
-        "provider" => {
-            let value = parts.collect::<Vec<_>>().join(" ");
-            if value.is_empty() {
-                push_diagnostic(
-                    state,
-                    format!(
-                        "Current provider: {}. Usage: /provider ollama|llama.cpp",
-                        state.provider.name
-                    ),
-                );
-                return true;
-            }
-
-            if !matches!(
-                value.to_ascii_lowercase().as_str(),
-                "ollama" | "llama.cpp" | "llamacpp" | "llama-cpp"
-            ) {
-                push_diagnostic(
-                    state,
-                    format!("Unknown provider: {value}. Usage: /provider ollama|llama.cpp"),
-                );
-                return true;
-            }
-
-            let local_provider = provider::LocalProvider::from_name(value.as_str());
-            state.provider = Provider::from(local_provider.name());
-            state.model = provider::LocalProvider::default_model_for(local_provider.name());
-            push_diagnostic(
-                state,
-                format!(
-                    "Provider set to {}. Model set to {}.",
-                    state.provider.name, state.model.name
-                ),
-            );
-            true
-        }
-        "model" => {
-            let value = parts.collect::<Vec<_>>().join(" ");
-            if value.is_empty() {
-                push_diagnostic(
-                    state,
-                    format!("Current model: {}. Usage: /model <name>", state.model.name),
-                );
-                return true;
-            }
-
-            let value = if state.provider.name == "llama.cpp"
-                && value.to_ascii_lowercase().ends_with(".gguf")
-            {
-                value[..value.len() - ".gguf".len()].to_string()
-            } else {
-                value
-            };
-            state.model = value.into();
-            push_diagnostic(state, format!("Model set to {}.", state.model.name));
-            true
-        }
-        _ => false,
-    }
 }
 
 fn push_diagnostic(state: &mut State, content: String) {
