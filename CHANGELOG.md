@@ -1,6 +1,6 @@
 # Changelog
 
-## Since 26w24a
+## 26w24b [2026-06-09]
 
 ### Added
 
@@ -24,3 +24,5 @@
 - Local snapshot versions are now derived from existing dev-release git tags for the current ISO week, while GitHub release builds still use matching tag names directly.
 - Split TUI slash-command handling into `apps/cli/src/command.rs` with unit coverage.
 - Added key cache serialization, expiry, invalid-cache cleanup, and unit coverage in `apps/cli/src/key_cache.rs`.
+- Added focused TUI application behavior coverage for command handling, menus, provider event draining, provider failures, and persisted state loading.
+- Added `scripts/next-dev-tag.py` to compute, create, or push the next dev-release tag.
