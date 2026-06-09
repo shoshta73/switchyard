@@ -1,0 +1,12 @@
+[package]
+name = "switchyard-crypto"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+aes-gcm = "0.10.3"
+anyhow.workspace = true
+argon2 = "0.5"
+rand = "0.8"
+tracing.workspace = true
+zerocopy.workspace = true

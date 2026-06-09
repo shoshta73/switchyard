@@ -1,0 +1,8 @@
+[workspace]
+resolver = "3"
+members = ["apps/*", "crates/*"]
+
+[workspace.dependencies]
+anyhow = "1.0.102"
+tracing = "0.1.44"
+zerocopy = { version = "0.8.50", features = ["derive"] }
