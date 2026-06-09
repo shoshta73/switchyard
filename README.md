@@ -4,6 +4,8 @@ SwitchYard is an agent harness for working with model providers.
 
 Currently, SwitchYard is implemented as a CLI application.
 
+For building from source, see [DEVELOPERS.md](DEVELOPERS.md).
+
 ## Supported Platforms
 
 SwitchYard currently targets Linux on x86_64.
