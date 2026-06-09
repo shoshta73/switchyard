@@ -21,6 +21,7 @@
 - Keep `Cargo.lock` committed; this workspace contains the `switchyard` binary application.
 - `apps/cli/build.rs` sets `SWITCHYARD_VERSION` from `GITHUB_REF_NAME` only when it matches `YYwWW[a-z]*`; local builds use current ISO week plus the next lowercase suffix after the latest matching git tag.
 - Dev releases are tag-triggered only; `.github/workflows/dev-rel.yml` accepts tags matching `YYwWW[a-z]*`, extracts the latest `CHANGELOG.md` section, and builds `cargo build -p switchyard --release`.
+- Use `scripts/next-dev-tag.py` to compute or create the next dev tag: `print` only prints it, `create` creates the local tag, and `push` creates and pushes it to trigger the dev-release workflow.
 
 ## Provider Runtime
 - Default provider is Ollama at `http://localhost:11434` with model `llama3.2`; set `SWITCHYARD_PROVIDER=llama.cpp` to use llama.cpp at `http://localhost:8080` with model `local-model`.
