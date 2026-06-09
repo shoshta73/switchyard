@@ -5,10 +5,10 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
 use switchyard_core::{ChatRequest, Message, MessageRole, Model, Provider, Session};
@@ -81,6 +81,20 @@ pub(crate) struct State {
     requests: Vec<RequestLog>,
     model: Model,
     provider: Provider,
+    menu: Option<Menu>,
+}
+
+struct Menu {
+    kind: MenuKind,
+    title: &'static str,
+    items: Vec<String>,
+    selected: usize,
+}
+
+#[derive(Clone, Copy)]
+enum MenuKind {
+    Provider,
+    Model,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -147,7 +161,49 @@ impl Default for State {
             requests: vec![],
             model: provider::LocalProvider::model_from_env(),
             provider: Provider::from(provider::LocalProvider::from_env().name()),
+            menu: None,
         }
+    }
+}
+
+impl Menu {
+    fn provider(current_provider: &Provider) -> Self {
+        let items = vec!["Ollama".to_string(), "llama.cpp".to_string()];
+        let selected = items
+            .iter()
+            .position(|item| item.eq_ignore_ascii_case(current_provider.name.as_str()))
+            .unwrap_or(0);
+
+        Self {
+            kind: MenuKind::Provider,
+            title: "Choose Provider",
+            items,
+            selected,
+        }
+    }
+
+    fn model(current_provider: &Provider, current_model: &Model) -> Self {
+        let default_model =
+            provider::LocalProvider::default_model_for(current_provider.name.as_str());
+        let mut items = vec![current_model.name.clone()];
+        if default_model.name != current_model.name {
+            items.push(default_model.name);
+        }
+
+        Self {
+            kind: MenuKind::Model,
+            title: "Choose Model",
+            items,
+            selected: 0,
+        }
+    }
+
+    fn previous(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+    }
+
+    fn next(&mut self) {
+        self.selected = (self.selected + 1).min(self.items.len().saturating_sub(1));
     }
 }
 
@@ -340,9 +396,41 @@ fn draw(data: &mut Data, state: &mut State) -> Result<()> {
             frame.render_widget(status, chunks[1]);
             frame.render_widget(prompt, chunks[2]);
         }
+
+        if let Some(menu) = &state.menu {
+            let area = centered_rect(area, 42, menu.items.len().saturating_add(4) as u16);
+            let lines = menu
+                .items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    if index == menu.selected {
+                        Line::from(Span::styled(
+                            format!("> {item}"),
+                            Style::default().fg(Color::Black).bg(Color::White),
+                        ))
+                    } else {
+                        Line::from(format!("  {item}"))
+                    }
+                })
+                .collect::<Vec<_>>();
+            let menu = Paragraph::new(Text::from(lines))
+                .block(Block::default().title(menu.title).borders(Borders::ALL));
+            frame.render_widget(Clear, area);
+            frame.render_widget(menu, area);
+        }
     })?;
 
     Ok(())
+}
+
+fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
+    Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width: width.min(area.width),
+        height: height.min(area.height),
+    }
 }
 
 fn update(data: &mut Data, state: &mut State) -> Result<bool> {
@@ -358,6 +446,10 @@ fn update(data: &mut Data, state: &mut State) -> Result<bool> {
 
     if key.kind != KeyEventKind::Press {
         return Ok(true);
+    }
+
+    if state.menu.is_some() {
+        return handle_menu_key(state, key.code);
     }
 
     match key.code {
@@ -426,6 +518,16 @@ fn update(data: &mut Data, state: &mut State) -> Result<bool> {
                     for diagnostic in command_context.take_diagnostics() {
                         push_diagnostic(state, diagnostic);
                     }
+                    state.input.clear();
+                    return Ok(true);
+                }
+                command::Outcome::OpenProviderMenu => {
+                    state.menu = Some(Menu::provider(&state.provider));
+                    state.input.clear();
+                    return Ok(true);
+                }
+                command::Outcome::OpenModelMenu => {
+                    state.menu = Some(Menu::model(&state.provider, &state.model));
                     state.input.clear();
                     return Ok(true);
                 }
@@ -543,6 +645,51 @@ fn push_diagnostic(state: &mut State, content: String) {
     });
     state.messages_scroll = u16::MAX;
     state.messages_follow_tail = true;
+}
+
+fn handle_menu_key(state: &mut State, code: KeyCode) -> Result<bool> {
+    match code {
+        KeyCode::Esc => {
+            state.menu = None;
+        }
+        KeyCode::Up => {
+            if let Some(menu) = &mut state.menu {
+                menu.previous();
+            }
+        }
+        KeyCode::Down => {
+            if let Some(menu) = &mut state.menu {
+                menu.next();
+            }
+        }
+        KeyCode::Enter => {
+            if let Some(menu) = state.menu.take() {
+                let value = menu.items[menu.selected].clone();
+                match menu.kind {
+                    MenuKind::Provider => {
+                        let local_provider = provider::LocalProvider::from_name(value.as_str());
+                        state.provider = Provider::from(local_provider.name());
+                        state.model =
+                            provider::LocalProvider::default_model_for(local_provider.name());
+                        push_diagnostic(
+                            state,
+                            format!(
+                                "Provider set to {}. Model set to {}.",
+                                state.provider.name, state.model.name
+                            ),
+                        );
+                    }
+                    MenuKind::Model => {
+                        state.model = value.into();
+                        push_diagnostic(state, format!("Model set to {}.", state.model.name));
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    Ok(true)
 }
 
 fn drain_provider_events(data: &mut Data, state: &mut State) {

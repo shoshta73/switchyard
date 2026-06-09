@@ -5,6 +5,8 @@ use crate::provider;
 pub(crate) enum Outcome {
     Ignored,
     Handled,
+    OpenProviderMenu,
+    OpenModelMenu,
     Exit,
 }
 
@@ -78,11 +80,7 @@ impl Command for ProviderCommand {
 
     fn execute(&self, context: &mut Context<'_>, args: &str) -> Outcome {
         if args.is_empty() {
-            context.push_diagnostic(format!(
-                "Current provider: {}. Usage: /provider ollama|llama.cpp",
-                context.provider.name
-            ));
-            return Outcome::Handled;
+            return Outcome::OpenProviderMenu;
         }
 
         if !matches!(
@@ -115,11 +113,7 @@ impl Command for ModelCommand {
 
     fn execute(&self, context: &mut Context<'_>, args: &str) -> Outcome {
         if args.is_empty() {
-            context.push_diagnostic(format!(
-                "Current model: {}. Usage: /model <name>",
-                context.model.name
-            ));
-            return Outcome::Handled;
+            return Outcome::OpenModelMenu;
         }
 
         let value = if context.provider.name == "llama.cpp"
@@ -176,6 +170,30 @@ mod tests {
 
         assert_eq!(context.provider.name, "llama.cpp");
         assert_eq!(context.model.name, "local-model");
+    }
+
+    #[test]
+    fn opens_provider_menu_without_args() {
+        let mut provider = Provider::from("Ollama");
+        let mut model = Model::from("llama3.2");
+        let mut context = command_context(&mut provider, &mut model);
+
+        assert!(matches!(
+            handle(&mut context, "/provider"),
+            Outcome::OpenProviderMenu
+        ));
+    }
+
+    #[test]
+    fn opens_model_menu_without_args() {
+        let mut provider = Provider::from("Ollama");
+        let mut model = Model::from("llama3.2");
+        let mut context = command_context(&mut provider, &mut model);
+
+        assert!(matches!(
+            handle(&mut context, "/model"),
+            Outcome::OpenModelMenu
+        ));
     }
 
     #[test]
