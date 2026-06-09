@@ -227,7 +227,12 @@ impl State {
                 .with_context(|| format!("failed to read state file {}", path.display()))?
                 .as_slice(),
         )
-        .with_context(|| format!("failed to parse state file {}", path.display()))?;
+        .with_context(|| {
+            format!(
+                "failed to parse state file {}; fix the JSON or remove the file to recreate default state",
+                path.display()
+            )
+        })?;
 
         state.devtools_visible = persisted.devtools_visible;
         state.devtools_tab = persisted.devtools_tab.into();

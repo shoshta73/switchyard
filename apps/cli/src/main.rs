@@ -47,9 +47,14 @@ fn get_initialized_encryption_key(salt_file: &Path) -> Result<argon2::Key> {
             Err(err) => {
                 error!("Failed to decrypt cipher text:{err}");
                 if attempt == 3 {
-                    return Err(anyhow!(err.to_string()))
-                        .context("failed to unlock vault after 3 attempts");
+                    return Err(anyhow!(
+                        "incorrect encryption password; failed to unlock SwitchYard vault after 3 attempts"
+                    ));
                 }
+                eprintln!(
+                    "Incorrect encryption password. Try again ({} attempts remaining).",
+                    3 - attempt
+                );
                 continue;
             }
         };
@@ -60,7 +65,9 @@ fn get_initialized_encryption_key(salt_file: &Path) -> Result<argon2::Key> {
         }
     }
 
-    Err(anyhow!("failed to unlock vault after 3 attempts"))
+    Err(anyhow!(
+        "incorrect encryption password; failed to unlock SwitchYard vault after 3 attempts"
+    ))
 }
 
 fn setup_encryption(salt_file: &Path) -> Result<argon2::Key> {
@@ -87,33 +94,39 @@ fn setup_encryption(salt_file: &Path) -> Result<argon2::Key> {
 }
 
 fn get_encryption_key(data: &mut application::Data) -> Result<()> {
-    let state_dir = runtime::state_dir().context("failed to get state directory")?;
-    let salt_file = runtime::salt_file().context("failed to get salt file path")?;
+    let state_dir = runtime::state_dir().context(
+        "failed to locate SwitchYard state directory; set HOME or an absolute XDG_STATE_HOME",
+    )?;
+    let salt_file = runtime::salt_file().context(
+        "failed to locate SwitchYard vault file; set HOME or an absolute XDG_STATE_HOME",
+    )?;
     if !fs::exists(state_dir.as_path()).context("failed to check if state_dir exists")? {
-        fs::create_dir_all(state_dir).context("failed to create state directory")?;
+        fs::create_dir_all(state_dir).context("failed to create SwitchYard state directory")?;
         data.encryption_key =
-            setup_encryption(salt_file.as_path()).context("Failed to setup encryption")?;
+            setup_encryption(salt_file.as_path()).context("failed to set up encrypted vault")?;
         return Ok(());
     }
 
     if !fs::exists(salt_file.as_path()).context("failed to check if salt_file_exists")? {
         data.encryption_key =
-            setup_encryption(salt_file.as_path()).context("Failed to setup encryption")?;
+            setup_encryption(salt_file.as_path()).context("failed to set up encrypted vault")?;
         return Ok(());
     }
 
     data.encryption_key = get_initialized_encryption_key(salt_file.as_path())
-        .context("Failed to get initialized encryption key")?;
+        .context("failed to unlock encrypted vault")?;
     Ok(())
 }
 
 fn main() -> Result<()> {
     let mut application_data = application::Data::new();
-    get_encryption_key(&mut application_data).context("Failed to get encryption key")?;
+    get_encryption_key(&mut application_data).context("failed to prepare encryption")?;
     let (terminal, guard) = terminal::init().context("failed to initialize terminal")?;
     application_data.terminal = Some(terminal);
     application_data.terminal_guard = guard;
-    let app_state_file = runtime::app_state_file().context("failed to get app state file path")?;
+    let app_state_file = runtime::app_state_file().context(
+        "failed to locate application state file; set HOME or an absolute XDG_STATE_HOME",
+    )?;
     let mut application_state = application::State::load(app_state_file.as_path())
         .context("failed to load application state")?;
     application::run(&mut application_data, &mut application_state)

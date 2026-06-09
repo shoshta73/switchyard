@@ -43,7 +43,7 @@ fn user_state_dir_from_env(
         .ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
-                "HOME environment variable is not set",
+                "HOME is not set and XDG_STATE_HOME is not an absolute path; set HOME or set XDG_STATE_HOME to an absolute directory for SwitchYard state",
             )
         })
 }
@@ -86,6 +86,7 @@ mod tests {
         let error = user_state_dir_from_env(None, None).unwrap_err();
 
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert!(error.to_string().contains("set HOME"));
     }
 
     #[test]

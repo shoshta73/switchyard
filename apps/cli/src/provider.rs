@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use switchyard_core::{ChatRequest, ChatResponse, Message, MessageRole, Model, ProviderClient};
 
@@ -207,14 +207,17 @@ impl OllamaProvider {
             .get(url.as_str())
             .send()
             .await
-            .with_context(|| format!("failed to send Ollama model discovery request to {url}"))?;
+            .with_context(|| offline_context("Ollama", "discover models", url.as_str()))?;
         let status = response.status();
         if !status.is_success() {
             let body = response
                 .text()
                 .await
                 .context("failed to read Ollama model discovery error response")?;
-            bail!("Ollama model discovery failed: HTTP status {status}: {body}");
+            bail!(
+                "{}",
+                http_failure_message("Ollama", "model discovery", status, body.as_str())
+            );
         }
 
         let response: OllamaTagsResponse = response
@@ -265,7 +268,7 @@ impl OllamaProvider {
             })
             .send()
             .await
-            .with_context(|| format!("failed to send Ollama chat request to {url}"))?;
+            .with_context(|| offline_context("Ollama", "send chat request", url.as_str()))?;
 
         let initial_response_time = started.elapsed();
         let status = response.status();
@@ -279,7 +282,10 @@ impl OllamaProvider {
                 .text()
                 .await
                 .context("failed to read Ollama error response")?;
-            bail!("Ollama chat request failed: HTTP status {status}: {body}");
+            bail!(
+                "{}",
+                http_failure_message("Ollama", "chat request", status, body.as_str())
+            );
         }
 
         let mut buffered = String::new();
@@ -338,16 +344,17 @@ impl LlamaCppProvider {
             .get(url.as_str())
             .send()
             .await
-            .with_context(|| {
-                format!("failed to send llama.cpp model discovery request to {url}")
-            })?;
+            .with_context(|| offline_context("llama.cpp", "discover models", url.as_str()))?;
         let status = response.status();
         if !status.is_success() {
             let body = response
                 .text()
                 .await
                 .context("failed to read llama.cpp model discovery error response")?;
-            bail!("llama.cpp model discovery failed: HTTP status {status}: {body}");
+            bail!(
+                "{}",
+                http_failure_message("llama.cpp", "model discovery", status, body.as_str())
+            );
         }
 
         let response: LlamaCppModelsResponse = response
@@ -381,7 +388,7 @@ impl LlamaCppProvider {
             })
             .send()
             .await
-            .with_context(|| format!("failed to send llama.cpp chat request to {url}"))?;
+            .with_context(|| offline_context("llama.cpp", "send chat request", url.as_str()))?;
 
         let initial_response_time = started.elapsed();
         let status = response.status();
@@ -395,7 +402,10 @@ impl LlamaCppProvider {
                 .text()
                 .await
                 .context("failed to read llama.cpp error response")?;
-            bail!("llama.cpp chat request failed: HTTP status {status}: {body}");
+            bail!(
+                "{}",
+                http_failure_message("llama.cpp", "chat request", status, body.as_str())
+            );
         }
 
         let mut buffered = String::new();
@@ -457,6 +467,29 @@ fn env_with_fallback(project_key: &str, fallback_key: &str, default: &str) -> St
     env::var(project_key)
         .or_else(|_| env::var(fallback_key))
         .unwrap_or_else(|_| default.to_string())
+}
+
+fn offline_context(provider: &str, action: &str, url: &str) -> String {
+    format!(
+        "{provider} is unreachable while trying to {action} at {url}; make sure the provider is running and the base URL is correct"
+    )
+}
+
+fn http_failure_message(provider: &str, action: &str, status: StatusCode, body: &str) -> String {
+    let body = body.trim();
+    let detail = if body.is_empty() {
+        "empty response body".to_string()
+    } else {
+        body.to_string()
+    };
+
+    if status == StatusCode::NOT_FOUND {
+        return format!(
+            "{provider} {action} failed with HTTP {status}: {detail}. If this is a model error, choose an installed model with /model or pull/load the model in {provider}."
+        );
+    }
+
+    format!("{provider} {action} failed with HTTP {status}: {detail}")
 }
 
 fn models_from_names(names: impl IntoIterator<Item = String>) -> Vec<Model> {
@@ -553,7 +586,12 @@ fn emit_llama_cpp_stream_line(line: &str, on_event: &mut impl FnMut(StreamEvent)
 
 #[cfg(test)]
 mod tests {
-    use super::{LlamaCppModelsResponse, OllamaTagsResponse, models_from_names};
+    use reqwest::StatusCode;
+
+    use super::{
+        LlamaCppModelsResponse, OllamaTagsResponse, http_failure_message, models_from_names,
+        offline_context,
+    };
 
     #[test]
     fn parses_ollama_tag_models() {
@@ -584,5 +622,32 @@ mod tests {
 
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].name, "a");
+    }
+
+    #[test]
+    fn provider_offline_context_is_actionable() {
+        let message = offline_context(
+            "Ollama",
+            "send chat request",
+            "http://localhost:11434/api/chat",
+        );
+
+        assert!(message.contains("Ollama is unreachable"));
+        assert!(message.contains("make sure the provider is running"));
+        assert!(message.contains("http://localhost:11434/api/chat"));
+    }
+
+    #[test]
+    fn not_found_http_failure_suggests_installed_model() {
+        let message = http_failure_message(
+            "Ollama",
+            "chat request",
+            StatusCode::NOT_FOUND,
+            "model not found",
+        );
+
+        assert!(message.contains("HTTP 404 Not Found"));
+        assert!(message.contains("choose an installed model with /model"));
+        assert!(message.contains("pull/load the model"));
     }
 }

@@ -17,6 +17,7 @@
 
 - Provider switches now reset the selected model to that provider's configured default.
 - llama.cpp model names entered with a trailing `.gguf` are normalized by stripping the extension.
+- Improved first-run and error messages for encryption unlock failures, missing state-directory environment, provider connectivity failures, missing models, and invalid persisted state JSON.
 
 ### Internal
 
