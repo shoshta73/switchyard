@@ -4,10 +4,12 @@ use tracing::error;
 use crate::Salt;
 
 const KEY_LENGTH: usize = 32;
+/// AES-256 key derived from a password and salt.
 pub type Key = [u8; KEY_LENGTH];
 
 type Result<T> = std::result::Result<T, argon2::Error>;
 
+/// Derives a fixed-length encryption key from a password and salt using Argon2id.
 pub fn derive_key(salt: Salt, password: &str) -> Result<Key> {
     let params = Params::new(
         64 * 1024,         // memory cost in KiB = 64 MB

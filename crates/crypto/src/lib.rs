@@ -1,3 +1,5 @@
+//! Encryption primitives and vault serialization for Switchyard secrets.
+
 use aes_gcm::{Aes256Gcm, KeyInit, aead::Aead};
 use anyhow::{Result, anyhow};
 use tracing::error;
@@ -5,32 +7,41 @@ use zerocopy::{FromBytes, IntoBytes};
 
 use crate::storage::{HEADER_LEN, VaultHeader};
 
+/// Package metadata for the crypto crate.
 pub mod meta {
+    /// Cargo package name for this crate.
     pub static NAME: &str = env!("CARGO_PKG_NAME");
+    /// Cargo package version for this crate.
     pub static VERSION: &str = env!("CARGO_PKG_VERSION");
 }
 
+/// Argon2 key derivation helpers.
 pub mod argon2;
 mod storage;
 
 const SALT_LENGTH: usize = 32;
+/// Salt used for password-based key derivation.
 pub type Salt = [u8; 32];
 
 const NONCE_LENGTH: usize = 12;
+/// AES-GCM nonce.
 pub type Nonce = [u8; NONCE_LENGTH];
 
+/// Generates a cryptographically random salt.
 pub fn random_salt() -> Salt {
     let mut salt: Salt = [0; SALT_LENGTH];
     rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, salt.as_mut_slice());
     salt
 }
 
+/// Generates a cryptographically random AES-GCM nonce.
 pub fn random_nonce() -> Nonce {
     let mut nonce: Nonce = [0; NONCE_LENGTH];
     rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut nonce);
     nonce
 }
 
+/// Encrypts plaintext with AES-256-GCM using the supplied key and nonce.
 pub fn encrypt(
     key: argon2::Key,
     nonce: Nonce,
@@ -47,6 +58,7 @@ pub fn encrypt(
         })
 }
 
+/// Decrypts ciphertext with AES-256-GCM using the supplied key and nonce.
 pub fn decrypt(
     key: argon2::Key,
     nonce: Nonce,
@@ -63,13 +75,18 @@ pub fn decrypt(
         })
 }
 
+/// Serialized vault payload containing key-derivation and encryption metadata.
 pub struct Vault {
+    /// Salt used to derive the encryption key.
     pub salt: Salt,
+    /// Nonce used to encrypt the ciphertext.
     pub nonce: Nonce,
+    /// Encrypted vault contents.
     pub ciphertext: Vec<u8>,
 }
 
 impl Vault {
+    /// Serializes the vault into the persisted binary format.
     pub fn serialize(self) -> Vec<u8> {
         let mut result: Vec<u8> = Vec::with_capacity(HEADER_LEN + self.ciphertext.len());
         result.extend_from_slice(VaultHeader::from(&self).as_bytes());
@@ -77,6 +94,7 @@ impl Vault {
         result
     }
 
+    /// Deserializes vault bytes from the persisted binary format.
     pub fn deserialize(data: Vec<u8>) -> Result<Self> {
         if data.len() < HEADER_LEN {
             error!("Failed to deserialize vault: data is missing length header");

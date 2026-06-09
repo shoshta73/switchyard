@@ -5,12 +5,14 @@ use crate::{
 
 use anyhow::{Result, anyhow};
 
+/// Length in bytes of the version 1 vault header.
 pub(crate) const VAULT_HEADER_LEN: usize = 64;
 const MAGIC_LEN: usize = 6;
 const VERSION_LEN: usize = 2;
 
 const RESERVED_LEN: usize = VAULT_HEADER_LEN - MAGIC_LEN - VERSION_LEN - SALT_LENGTH - NONCE_LENGTH;
 
+/// Version 1 vault header stored before ciphertext bytes.
 #[derive(
     Clone,
     Copy,
@@ -41,6 +43,7 @@ impl From<&Vault> for VaultHeader {
 }
 
 impl VaultHeader {
+    /// Validates that the header belongs to a supported vault format.
     pub(crate) fn validate(&self) -> Result<()> {
         if &self.magic != MAGIC {
             return Err(anyhow!("unsupported vault format"));
