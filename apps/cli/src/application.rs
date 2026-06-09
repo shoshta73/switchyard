@@ -175,9 +175,42 @@ impl Default for State {
     }
 }
 
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PersistedDevtoolsTab {
+    Logs,
+    Requests,
+}
+
+impl From<DevtoolsTab> for PersistedDevtoolsTab {
+    fn from(value: DevtoolsTab) -> Self {
+        match value {
+            DevtoolsTab::Logs => Self::Logs,
+            DevtoolsTab::Requests => Self::Requests,
+        }
+    }
+}
+
+impl From<PersistedDevtoolsTab> for DevtoolsTab {
+    fn from(value: PersistedDevtoolsTab) -> Self {
+        match value {
+            PersistedDevtoolsTab::Logs => Self::Logs,
+            PersistedDevtoolsTab::Requests => Self::Requests,
+        }
+    }
+}
+
+impl Default for PersistedDevtoolsTab {
+    fn default() -> Self {
+        Self::Logs
+    }
+}
+
 #[derive(Deserialize, Serialize)]
 struct PersistedState {
     devtools_visible: bool,
+    #[serde(default)]
+    devtools_tab: PersistedDevtoolsTab,
     provider: String,
     model: String,
 }
@@ -197,6 +230,7 @@ impl State {
         .with_context(|| format!("failed to parse state file {}", path.display()))?;
 
         state.devtools_visible = persisted.devtools_visible;
+        state.devtools_tab = persisted.devtools_tab.into();
         state.provider = Provider::from(persisted.provider.as_str());
         state.model = Model::from(persisted.model);
         Ok(state)
@@ -205,6 +239,7 @@ impl State {
     pub(crate) fn save(&self, path: &Path) -> Result<()> {
         let persisted = PersistedState {
             devtools_visible: self.devtools_visible,
+            devtools_tab: self.devtools_tab.into(),
             provider: self.provider.name.clone(),
             model: self.model.name.clone(),
         };
