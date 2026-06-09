@@ -82,6 +82,40 @@ Start SwitchYard with llama.cpp as the provider:
 SWITCHYARD_PROVIDER=llama.cpp switchyard
 ```
 
+## Environment Variables
+
+Use `SWITCHYARD_PROVIDER` to choose the startup provider:
+
+```sh
+SWITCHYARD_PROVIDER=ollama switchyard
+SWITCHYARD_PROVIDER=llama.cpp switchyard
+```
+
+Configure Ollama with:
+
+```sh
+SWITCHYARD_OLLAMA_BASE_URL=http://localhost:11434
+SWITCHYARD_OLLAMA_MODEL=llama3.2
+```
+
+Configure llama.cpp with:
+
+```sh
+SWITCHYARD_LLAMA_CPP_BASE_URL=http://localhost:8080
+SWITCHYARD_LLAMA_CPP_MODEL=local-model
+```
+
+SwitchYard also reads these provider-native fallback variables when the matching `SWITCHYARD_*` variable is not set:
+
+```sh
+OLLAMA_BASE_URL
+OLLAMA_MODEL
+LLAMA_CPP_BASE_URL
+LLAMA_CPP_MODEL
+```
+
+Provider and model selections are persisted after the CLI exits. Environment variables set the initial defaults, but persisted selections are reused on later runs.
+
 ## First Run
 
 On first run, SwitchYard prompts for an encryption password and creates its local state directory.
