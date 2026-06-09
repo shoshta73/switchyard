@@ -41,6 +41,21 @@ trait Command {
 
 const COMMANDS: &[&dyn Command] = &[&ExitCommand, &ProviderCommand, &ModelCommand];
 
+pub(crate) fn complete(prompt: &str) -> Option<String> {
+    let command = prompt.strip_prefix('/')?;
+    if command.is_empty() || command.chars().any(char::is_whitespace) {
+        return None;
+    }
+
+    let mut matches = COMMANDS
+        .iter()
+        .map(|command| command.name())
+        .filter(|name| name.starts_with(command));
+
+    let name = matches.next()?;
+    matches.next().is_none().then(|| format!("/{name}"))
+}
+
 pub(crate) fn handle(context: &mut Context<'_>, prompt: &str) -> Outcome {
     let Some(command) = prompt.strip_prefix('/') else {
         return Outcome::Ignored;
@@ -133,7 +148,7 @@ impl Command for ModelCommand {
 mod tests {
     use switchyard_core::{Model, Provider};
 
-    use super::{Context, Outcome, handle};
+    use super::{Context, Outcome, complete, handle};
 
     fn command_context<'a>(provider: &'a mut Provider, model: &'a mut Model) -> Context<'a> {
         Context::new(provider, model)
@@ -146,6 +161,20 @@ mod tests {
         let mut context = command_context(&mut provider, &mut model);
 
         assert!(matches!(handle(&mut context, "hello"), Outcome::Ignored));
+    }
+
+    #[test]
+    fn completes_unique_command_prefix() {
+        assert_eq!(complete("/pro"), Some("/provider".to_string()));
+        assert_eq!(complete("/m"), Some("/model".to_string()));
+        assert_eq!(complete("/e"), Some("/exit".to_string()));
+    }
+
+    #[test]
+    fn skips_command_completion_for_non_command_or_argument_input() {
+        assert_eq!(complete("hello"), None);
+        assert_eq!(complete("/"), None);
+        assert_eq!(complete("/provider o"), None);
     }
 
     #[test]

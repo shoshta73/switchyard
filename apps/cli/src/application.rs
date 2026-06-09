@@ -554,7 +554,9 @@ fn update(data: &mut Data, state: &mut State) -> Result<bool> {
         }
 
         KeyCode::Tab => {
-            if state.devtools_visible {
+            if let Some(completion) = command::complete(&state.input) {
+                state.input = completion;
+            } else if state.devtools_visible {
                 state.devtools_tab = state.devtools_tab.toggle();
                 state.devtools_scroll = u16::MAX;
             }

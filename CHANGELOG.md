@@ -1,5 +1,9 @@
 # Changelog
 
+## Since 26w24b
+
+- Added Tab autocompletion for registered slash commands in the TUI prompt.
+
 ## 26w24b [2026-06-09]
 
 ### Added
