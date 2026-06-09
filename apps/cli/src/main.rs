@@ -7,15 +7,34 @@ use switchyard_crypto::{Vault, argon2, decrypt, encrypt, random_nonce, random_sa
 
 mod application;
 mod command;
+mod key_cache;
 mod log;
 mod provider;
 mod runtime;
 mod terminal;
 mod user;
 
+fn is_initialized_value(decrypted: &[u8]) -> Result<bool> {
+    Ok(
+        str::from_utf8(decrypted).context("failed to convert decrypted bytes to string")?
+            == "switchyard",
+    )
+}
+
 fn get_initialized_encryption_key(salt_file: &Path) -> Result<argon2::Key> {
     let vault = Vault::deserialize(fs::read(salt_file).context("failed to read salt file")?)
         .context("failed to deserialize vault file")?;
+
+    if let Some(key) = key_cache::load().context("failed to load key cache")? {
+        if let Ok(decrypted) = decrypt(key, vault.nonce, vault.ciphertext.clone().as_slice())
+            && is_initialized_value(decrypted.as_slice())?
+        {
+            return Ok(key);
+        }
+
+        key_cache::remove().context("failed to remove invalid key cache")?;
+    }
+
     for attempt in 1..=3 {
         let key = argon2::derive_key(
             vault.salt,
@@ -35,10 +54,8 @@ fn get_initialized_encryption_key(salt_file: &Path) -> Result<argon2::Key> {
             }
         };
 
-        if str::from_utf8(decrypted.as_slice())
-            .context("failed to convert decrypted bytes to string")?
-            == "switchyard"
-        {
+        if is_initialized_value(decrypted.as_slice())? {
+            key_cache::store(key).context("failed to store key cache")?;
             return Ok(key);
         }
     }
@@ -65,6 +82,7 @@ fn setup_encryption(salt_file: &Path) -> Result<argon2::Key> {
         .serialize(),
     )
     .context("failed to serialize vault file")?;
+    key_cache::store(key).context("failed to store key cache")?;
     Ok(key)
 }
 

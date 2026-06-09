@@ -4,7 +4,7 @@ use tracing::{debug, info};
 
 use crate::runtime;
 
-static DIRECT_TERMINAL_OUTPUT_ENABLED: AtomicBool = AtomicBool::new(true);
+static DIRECT_TERMINAL_OUTPUT_ENABLED: AtomicBool = AtomicBool::new(false);
 
 mod detail {
     #[derive(Default)]
