@@ -1,4 +1,4 @@
-use std::{io::Stdout, sync::mpsc, time::Duration};
+use std::{fs, io::Stdout, path::Path, sync::mpsc, time::Duration};
 
 use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -10,6 +10,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
+use serde::{Deserialize, Serialize};
 
 use switchyard_core::{ChatRequest, Message, MessageRole, Model, Provider, Session};
 use switchyard_crypto::argon2;
@@ -171,6 +172,47 @@ impl Default for State {
             provider: Provider::from(provider::LocalProvider::from_env().name()),
             menu: None,
         }
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct PersistedState {
+    devtools_visible: bool,
+    provider: String,
+    model: String,
+}
+
+impl State {
+    pub(crate) fn load(path: &Path) -> Result<Self> {
+        let mut state = Self::default();
+        if !fs::exists(path).context("failed to check if state file exists")? {
+            return Ok(state);
+        }
+
+        let persisted: PersistedState = serde_json::from_slice(
+            fs::read(path)
+                .with_context(|| format!("failed to read state file {}", path.display()))?
+                .as_slice(),
+        )
+        .with_context(|| format!("failed to parse state file {}", path.display()))?;
+
+        state.devtools_visible = persisted.devtools_visible;
+        state.provider = Provider::from(persisted.provider.as_str());
+        state.model = Model::from(persisted.model);
+        Ok(state)
+    }
+
+    pub(crate) fn save(&self, path: &Path) -> Result<()> {
+        let persisted = PersistedState {
+            devtools_visible: self.devtools_visible,
+            provider: self.provider.name.clone(),
+            model: self.model.name.clone(),
+        };
+        fs::write(
+            path,
+            serde_json::to_vec_pretty(&persisted).context("failed to serialize state")?,
+        )
+        .with_context(|| format!("failed to write state file {}", path.display()))
     }
 }
 

@@ -14,6 +14,10 @@ pub(crate) fn salt_file() -> io::Result<PathBuf> {
     state_dir().map(|path| path.join("salt"))
 }
 
+pub(crate) fn app_state_file() -> io::Result<PathBuf> {
+    state_dir().map(|path| path.join("state.json"))
+}
+
 fn user_state_dir() -> io::Result<PathBuf> {
     user_state_dir_from_env(
         env::var_os("XDG_STATE_HOME").as_deref(),
@@ -96,5 +100,12 @@ mod tests {
         let expected = state_dir().unwrap().join("salt");
 
         assert_eq!(salt_file().unwrap(), expected);
+    }
+
+    #[test]
+    fn appends_app_state_file_to_state_dir() {
+        let expected = state_dir().unwrap().join("state.json");
+
+        assert_eq!(app_state_file().unwrap(), expected);
     }
 }

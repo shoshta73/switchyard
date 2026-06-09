@@ -113,9 +113,14 @@ fn main() -> Result<()> {
     let (terminal, guard) = terminal::init().context("failed to initialize terminal")?;
     application_data.terminal = Some(terminal);
     application_data.terminal_guard = guard;
-    let mut application_state = application::State::default();
+    let app_state_file = runtime::app_state_file().context("failed to get app state file path")?;
+    let mut application_state = application::State::load(app_state_file.as_path())
+        .context("failed to load application state")?;
     application::run(&mut application_data, &mut application_state)
         .context("failed to run application")?;
+    application_state
+        .save(app_state_file.as_path())
+        .context("failed to save application state")?;
     let terminal = application_data
         .terminal
         .as_mut()
