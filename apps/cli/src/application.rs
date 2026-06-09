@@ -891,9 +891,37 @@ fn drain_provider_events(data: &mut Data, state: &mut State) {
 
 #[cfg(test)]
 mod tests {
-    use switchyard_core::{Model, Provider};
+    use std::{fs, time::Duration};
 
-    use super::Menu;
+    use crossterm::event::KeyCode;
+    use switchyard_core::{Message, MessageRole, Model, Provider};
+
+    use super::{
+        Data, DevtoolsTab, Menu, MenuKind, ProviderEvent, RequestLog, State, drain_provider_events,
+        handle_menu_key, push_diagnostic,
+    };
+
+    fn state_with(provider: &str, model: &str) -> State {
+        State {
+            provider: Provider::from(provider),
+            model: Model::from(model),
+            ..State::default()
+        }
+    }
+
+    fn test_data() -> Data {
+        let (provider_events_tx, provider_events_rx) = std::sync::mpsc::channel();
+
+        Data {
+            logging_buffer: Default::default(),
+            encryption_key: Default::default(),
+            terminal: None,
+            terminal_guard: Default::default(),
+            provider_events_tx,
+            provider_events_rx,
+            runtime: tokio::runtime::Runtime::new().unwrap(),
+        }
+    }
 
     #[test]
     fn model_menu_includes_current_default_and_discovered_models_once() {
@@ -907,5 +935,299 @@ mod tests {
         );
 
         assert_eq!(menu.items, vec!["custom", "llama3.2", "qwen2.5"]);
+    }
+
+    #[test]
+    fn command_diagnostic_updates_chat_scroll_state() {
+        let mut state = State::default();
+
+        push_diagnostic(
+            &mut state,
+            "Unknown provider: nope. Usage: /provider ollama|llama.cpp".to_string(),
+        );
+
+        assert_eq!(state.session.messages.len(), 1);
+        assert!(matches!(
+            state.session.messages[0].role,
+            MessageRole::Diagnostic
+        ));
+        assert_eq!(
+            state.session.messages[0].content,
+            "Unknown provider: nope. Usage: /provider ollama|llama.cpp"
+        );
+        assert_eq!(state.messages_scroll, u16::MAX);
+        assert!(state.messages_follow_tail);
+    }
+
+    #[test]
+    fn provider_menu_selection_sets_provider_default_model_and_diagnostic() {
+        let mut state = state_with("Ollama", "custom");
+        state.menu = Some(Menu::provider(&state.provider));
+
+        handle_menu_key(&mut state, KeyCode::Down).unwrap();
+        handle_menu_key(&mut state, KeyCode::Enter).unwrap();
+
+        assert!(state.menu.is_none());
+        assert_eq!(state.provider.name, "llama.cpp");
+        assert_eq!(state.model.name, "local-model");
+        assert_eq!(
+            state.session.messages.last().unwrap().content,
+            "Provider set to llama.cpp. Model set to local-model."
+        );
+    }
+
+    #[test]
+    fn model_menu_selection_sets_model_and_closes_menu() {
+        let mut state = state_with("Ollama", "llama3.2");
+        state.menu = Some(Menu {
+            kind: MenuKind::Model,
+            title: "Choose Model",
+            items: vec!["llama3.2".to_string(), "qwen2.5".to_string()],
+            selected: 1,
+        });
+
+        handle_menu_key(&mut state, KeyCode::Enter).unwrap();
+
+        assert!(state.menu.is_none());
+        assert_eq!(state.model.name, "qwen2.5");
+        assert_eq!(
+            state.session.messages.last().unwrap().content,
+            "Model set to qwen2.5."
+        );
+    }
+
+    #[test]
+    fn menu_navigation_is_bounded_and_escape_closes() {
+        let mut state = state_with("Ollama", "llama3.2");
+        state.menu = Some(Menu::provider(&state.provider));
+
+        handle_menu_key(&mut state, KeyCode::Up).unwrap();
+        assert_eq!(state.menu.as_ref().unwrap().selected, 0);
+
+        handle_menu_key(&mut state, KeyCode::Down).unwrap();
+        handle_menu_key(&mut state, KeyCode::Down).unwrap();
+        assert_eq!(state.menu.as_ref().unwrap().selected, 1);
+
+        handle_menu_key(&mut state, KeyCode::Esc).unwrap();
+        assert!(state.menu.is_none());
+    }
+
+    #[test]
+    fn drain_provider_events_applies_all_pending_events_in_order() {
+        let mut data = test_data();
+        let mut state = State::default();
+        state.messages_follow_tail = true;
+        state.requests.push(RequestLog {
+            method: "POST",
+            url: "http://localhost/chat".to_string(),
+            model: "llama3.2".to_string(),
+            status: None,
+            initial_response_time: None,
+            total_time: None,
+            error: None,
+        });
+        state.session.messages.push(Message {
+            role: MessageRole::Assistant,
+            content: String::new(),
+        });
+        state.session.messages.push(Message {
+            role: MessageRole::Reasoning,
+            content: String::new(),
+        });
+
+        data.provider_events_tx
+            .send(ProviderEvent::InitialResponse {
+                request_index: 0,
+                status: 200,
+                initial_response_time: Duration::from_millis(12),
+            })
+            .unwrap();
+        data.provider_events_tx
+            .send(ProviderEvent::Chunk {
+                message_index: 0,
+                content: "hel".to_string(),
+            })
+            .unwrap();
+        data.provider_events_tx
+            .send(ProviderEvent::ReasoningChunk {
+                message_index: 1,
+                content: "thinking".to_string(),
+            })
+            .unwrap();
+        data.provider_events_tx
+            .send(ProviderEvent::Chunk {
+                message_index: 0,
+                content: "lo".to_string(),
+            })
+            .unwrap();
+        data.provider_events_tx
+            .send(ProviderEvent::Complete {
+                request_index: 0,
+                total_time: Duration::from_millis(34),
+            })
+            .unwrap();
+
+        drain_provider_events(&mut data, &mut state);
+
+        assert_eq!(state.requests[0].status, Some(200));
+        assert_eq!(
+            state.requests[0].initial_response_time,
+            Some(Duration::from_millis(12))
+        );
+        assert_eq!(
+            state.requests[0].total_time,
+            Some(Duration::from_millis(34))
+        );
+        assert_eq!(state.requests[0].error, None);
+        assert_eq!(state.session.messages[0].content, "hello");
+        assert_eq!(state.session.messages[1].content, "thinking");
+        assert_eq!(state.messages_scroll, u16::MAX);
+        assert_eq!(state.devtools_scroll, u16::MAX);
+    }
+
+    #[test]
+    fn provider_failure_marks_request_assistant_and_diagnostic() {
+        let mut data = test_data();
+        let mut state = state_with("Ollama", "llama3.2");
+        state.requests.push(RequestLog {
+            method: "POST",
+            url: "http://localhost/chat".to_string(),
+            model: "llama3.2".to_string(),
+            status: Some(200),
+            initial_response_time: Some(Duration::from_millis(5)),
+            total_time: None,
+            error: None,
+        });
+        state.session.messages.push(Message {
+            role: MessageRole::Assistant,
+            content: String::new(),
+        });
+
+        data.provider_events_tx
+            .send(ProviderEvent::Failure {
+                request_index: 0,
+                message_index: 0,
+                error: "connection refused".to_string(),
+                total_time: Duration::from_millis(40),
+            })
+            .unwrap();
+
+        drain_provider_events(&mut data, &mut state);
+
+        assert_eq!(state.requests[0].status, None);
+        assert_eq!(
+            state.requests[0].total_time,
+            Some(Duration::from_millis(40))
+        );
+        assert_eq!(
+            state.requests[0].error.as_deref(),
+            Some("connection refused")
+        );
+        assert_eq!(state.session.messages[0].content, "[request failed]");
+        assert!(matches!(
+            state.session.messages[1].role,
+            MessageRole::Diagnostic
+        ));
+        assert_eq!(
+            state.session.messages[1].content,
+            "Ollama request failed: connection refused"
+        );
+    }
+
+    #[test]
+    fn model_discovery_events_only_update_current_model_menu_provider() {
+        let mut data = test_data();
+        let mut state = state_with("Ollama", "llama3.2");
+        state.menu = Some(Menu::model(&state.provider, &state.model, Vec::new()));
+
+        data.provider_events_tx
+            .send(ProviderEvent::ModelsDiscovered {
+                provider: "llama.cpp".to_string(),
+                models: vec![Model::from("ignored")],
+            })
+            .unwrap();
+        data.provider_events_tx
+            .send(ProviderEvent::ModelsDiscovered {
+                provider: "Ollama".to_string(),
+                models: vec![Model::from("qwen2.5")],
+            })
+            .unwrap();
+
+        drain_provider_events(&mut data, &mut state);
+
+        assert_eq!(
+            state.menu.as_ref().unwrap().items,
+            vec!["llama3.2".to_string(), "qwen2.5".to_string()]
+        );
+    }
+
+    #[test]
+    fn model_discovery_failure_reports_only_current_provider() {
+        let mut data = test_data();
+        let mut state = state_with("Ollama", "llama3.2");
+
+        data.provider_events_tx
+            .send(ProviderEvent::ModelDiscoveryFailed {
+                provider: "llama.cpp".to_string(),
+                error: "ignored".to_string(),
+            })
+            .unwrap();
+        data.provider_events_tx
+            .send(ProviderEvent::ModelDiscoveryFailed {
+                provider: "Ollama".to_string(),
+                error: "offline".to_string(),
+            })
+            .unwrap();
+
+        drain_provider_events(&mut data, &mut state);
+
+        assert_eq!(state.session.messages.len(), 1);
+        assert_eq!(
+            state.session.messages[0].content,
+            "Model discovery failed: offline"
+        );
+    }
+
+    #[test]
+    fn loads_persisted_state_with_devtools_tab_provider_and_model() {
+        let path = std::env::temp_dir().join(format!(
+            "switchyard-state-{}-{}.json",
+            std::process::id(),
+            "loads_persisted_state"
+        ));
+        fs::write(
+            &path,
+            r#"{
+  "devtools_visible": true,
+  "devtools_tab": "requests",
+  "provider": "llama.cpp",
+  "model": "mistral"
+}"#,
+        )
+        .unwrap();
+
+        let state = State::load(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+
+        assert!(state.devtools_visible);
+        assert!(matches!(state.devtools_tab, DevtoolsTab::Requests));
+        assert_eq!(state.provider.name, "llama.cpp");
+        assert_eq!(state.model.name, "mistral");
+    }
+
+    #[test]
+    fn loads_missing_persisted_state_as_default() {
+        let path = std::env::temp_dir().join(format!(
+            "switchyard-missing-state-{}-{}.json",
+            std::process::id(),
+            "loads_default"
+        ));
+        let _ = fs::remove_file(&path);
+
+        let state = State::load(&path).unwrap();
+
+        assert!(!state.devtools_visible);
+        assert!(matches!(state.devtools_tab, DevtoolsTab::Logs));
+        assert!(state.session.messages.is_empty());
     }
 }
