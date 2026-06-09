@@ -175,9 +175,10 @@ impl Default for State {
     }
 }
 
-#[derive(Clone, Copy, Deserialize, Serialize)]
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum PersistedDevtoolsTab {
+    #[default]
     Logs,
     Requests,
 }
@@ -197,12 +198,6 @@ impl From<PersistedDevtoolsTab> for DevtoolsTab {
             PersistedDevtoolsTab::Logs => Self::Logs,
             PersistedDevtoolsTab::Requests => Self::Requests,
         }
-    }
-}
-
-impl Default for PersistedDevtoolsTab {
-    fn default() -> Self {
-        Self::Logs
     }
 }
 
@@ -1020,8 +1015,10 @@ mod tests {
     #[test]
     fn drain_provider_events_applies_all_pending_events_in_order() {
         let mut data = test_data();
-        let mut state = State::default();
-        state.messages_follow_tail = true;
+        let mut state = State {
+            messages_follow_tail: true,
+            ..State::default()
+        };
         state.requests.push(RequestLog {
             method: "POST",
             url: "http://localhost/chat".to_string(),
