@@ -39,7 +39,7 @@ trait Command {
     fn execute(&self, context: &mut Context<'_>, args: &str) -> Outcome;
 }
 
-const COMMANDS: &[&dyn Command] = &[&ExitCommand, &ProviderCommand, &ModelCommand];
+const COMMANDS: &[&dyn Command] = &[&ExitCommand, &HelpCommand, &ProviderCommand, &ModelCommand];
 
 pub(crate) fn complete(prompt: &str) -> Option<String> {
     let command = prompt.strip_prefix('/')?;
@@ -83,6 +83,21 @@ impl Command for ExitCommand {
 
     fn execute(&self, _context: &mut Context<'_>, _args: &str) -> Outcome {
         Outcome::Exit
+    }
+}
+
+struct HelpCommand;
+
+impl Command for HelpCommand {
+    fn name(&self) -> &'static str {
+        "help"
+    }
+
+    fn execute(&self, context: &mut Context<'_>, _args: &str) -> Outcome {
+        context.push_diagnostic(
+            "Available commands:\n/help - Show this help.\n/provider [ollama|llama.cpp] - Choose a provider.\n/model [name] - Choose or set a model.\n/exit - Exit Switchyard.",
+        );
+        Outcome::Handled
     }
 }
 
@@ -168,6 +183,7 @@ mod tests {
         assert_eq!(complete("/pro"), Some("/provider".to_string()));
         assert_eq!(complete("/m"), Some("/model".to_string()));
         assert_eq!(complete("/e"), Some("/exit".to_string()));
+        assert_eq!(complete("/h"), Some("/help".to_string()));
     }
 
     #[test]
@@ -184,6 +200,22 @@ mod tests {
         let mut context = command_context(&mut provider, &mut model);
 
         assert!(matches!(handle(&mut context, "/exit"), Outcome::Exit));
+    }
+
+    #[test]
+    fn shows_help() {
+        let mut provider = Provider::from("Ollama");
+        let mut model = Model::from("llama3.2");
+        let mut context = command_context(&mut provider, &mut model);
+
+        assert!(matches!(handle(&mut context, "/help"), Outcome::Handled));
+
+        let diagnostics = context.take_diagnostics();
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].contains("Available commands:"));
+        assert!(diagnostics[0].contains("/provider [ollama|llama.cpp]"));
+        assert!(diagnostics[0].contains("/model [name]"));
+        assert!(diagnostics[0].contains("/exit"));
     }
 
     #[test]
